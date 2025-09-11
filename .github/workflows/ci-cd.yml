@@ -1,17 +1,6 @@
-name: ci-cd
-
-on:
-  push:
-    branches: [ main ]
-
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    env:
-      REGISTRY: ${{ secrets.DOCR_REGISTRY }} # e.g. registry.digitalocean.com/your-registry
-      REPO:     ${{ secrets.DOCR_REPO }}     # e.g. checkin
-      IMAGE_WEB:    ${{ secrets.DOCR_REGISTRY }}/${{ secrets.DOCR_REPO }}/checkin-web:${{ github.sha }}
-      IMAGE_WORKER: ${{ secrets.DOCR_REGISTRY }}/${{ secrets.DOCR_REPO }}/checkin-worker:${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -20,11 +9,17 @@ jobs:
 
       - name: Login to DOCR
         run: |
-          echo "${{ secrets.DOCR_PASSWORD }}" | docker login ${{ secrets.DOCR_REGISTRY }} -u "${{ secrets.DOCR_USERNAME }}" --password-stdin
+          echo "${{ secrets.DOCR_PASSWORD }}" | docker login "${{ secrets.DOCR_REGISTRY }}" -u "${{ secrets.DOCR_USERNAME }}" --password-stdin
+
+      - name: Compute image names (single repo, two tags)
+        run: |
+          echo "IMAGE_BASE=${{ secrets.DOCR_REGISTRY }}/${{ secrets.DOCR_REPO }}" >> $GITHUB_ENV
+          echo "IMAGE_WEB=${{ secrets.DOCR_REGISTRY }}/${{ secrets.DOCR_REPO }}:web-${{ github.sha }}" >> $GITHUB_ENV
+          echo "IMAGE_WORKER=${{ secrets.DOCR_REGISTRY }}/${{ secrets.DOCR_REPO }}:worker-${{ github.sha }}" >> $GITHUB_ENV
 
       - name: Build & push images
         run: |
-          docker build -f docker/Dockerfile.web   -t "$IMAGE_WEB" .
+          docker build -f docker/Dockerfile.web    -t "$IMAGE_WEB" .
           docker push "$IMAGE_WEB"
           docker build -f docker/Dockerfile.worker -t "$IMAGE_WORKER" .
           docker push "$IMAGE_WORKER"
@@ -49,19 +44,20 @@ jobs:
           script: |
             set -e
             cd /opt/checkin
-            echo DOMAIN=${{ secrets.DOMAIN }} > .env.production
-            echo CADDY_EMAIL=${{ secrets.CADDY_EMAIL }} >> .env.production
-            echo NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }} >> .env.production
-            echo AUTH_SECRET=${{ secrets.AUTH_SECRET }} >> .env.production
-            echo BCRYPT_ROUNDS=12 >> .env.production
-            echo DATABASE_URL=${{ secrets.DATABASE_URL }} >> .env.production
-            echo REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }} >> .env.production
-            echo REDIS_URL=redis://:${{ secrets.REDIS_PASSWORD }}@redis:6379 >> .env.production
-            echo IMAGE_WEB=${{ env.IMAGE_WEB }} >> .env.production
-            echo IMAGE_WORKER=${{ env.IMAGE_WORKER }} >> .env.production
+            {
+              echo DOMAIN=${{ secrets.DOMAIN }}
+              echo CADDY_EMAIL=${{ secrets.CADDY_EMAIL }}
+              echo NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }}
+              echo AUTH_SECRET=${{ secrets.AUTH_SECRET }}
+              echo BCRYPT_ROUNDS=12
+              echo DATABASE_URL=${{ secrets.DATABASE_URL }}
+              echo REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+              echo REDIS_URL=redis://:${{ secrets.REDIS_PASSWORD }}@redis:6379
+              echo IMAGE_WEB=$IMAGE_WEB
+              echo IMAGE_WORKER=$IMAGE_WORKER
+            } > .env.production
 
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
-            # Run DB migrations
             docker compose -f docker-compose.prod.yml exec -T web npx prisma migrate deploy

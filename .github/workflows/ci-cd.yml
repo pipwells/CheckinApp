@@ -2,26 +2,41 @@ name: ci-cd
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   workflow_dispatch: {}
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # ✅ Fail fast if the files to upload aren't present in the workspace
+      - name: Sanity check deploy bundle
+        run: |
+          set -e
+          echo "Workspace listing:"
+          ls -la
+          echo "Tracked files:"
+          git ls-files
+          test -f docker-compose.prod.yml || (echo "❌ missing docker-compose.prod.yml at repo root" && exit 1)
+          test -f caddy/Caddyfile         || (echo "❌ missing caddy/Caddyfile" && exit 1)
+
       - name: Login to DOCR
         run: |
-          echo "${{ secrets.DOCR_PASSWORD }}" | docker login "${{ secrets.DOCR_REGISTRY }}" -u "${{ secrets.DOCR_USERNAME }}" --password-stdin
+          echo "${{ secrets.DOCR_PASSWORD }}" \
+            | docker login "${{ secrets.DOCR_REGISTRY }}" \
+              -u "${{ secrets.DOCR_USERNAME }}" --password-stdin
 
-      - name: Compute image names (single repo, two tags)
+      # If you upgraded DOCR and want ONE repo with TWO tags, keep this block.
+      # (If you want two repos, change these to use DOCR_REPO_WEB and DOCR_REPO_WORKER.)
+      - name: Compute image names
         run: |
-          echo "IMAGE_BASE=${{ secrets.DOCR_REGISTRY }}/${{ secrets.DOCR_REPO }}" >> $GITHUB_ENV
-          echo "IMAGE_WEB=${{ secrets.DOCR_REGISTRY }}/${{ secrets.DOCR_REPO }}:web-${{ github.sha }}" >> $GITHUB_ENV
+          echo "IMAGE_WEB=${{ secrets.DOCR_REGISTRY }}/${{ secrets.DOCR_REPO }}:web-${{ github.sha }}"     >> $GITHUB_ENV
           echo "IMAGE_WORKER=${{ secrets.DOCR_REGISTRY }}/${{ secrets.DOCR_REPO }}:worker-${{ github.sha }}" >> $GITHUB_ENV
 
       - name: Build & push images
@@ -31,6 +46,18 @@ jobs:
           docker build -f docker/Dockerfile.worker -t "$IMAGE_WORKER" .
           docker push "$IMAGE_WORKER"
 
+      # Make sure the target path exists on the droplet
+      - name: Ensure /opt/checkin exists on droplet
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_SSH_HOST }}
+          username: ${{ secrets.DO_SSH_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            sudo mkdir -p /opt/checkin/caddy
+            sudo chown -R "$USER":"$USER" /opt/checkin
+
+      # ✅ Upload the deploy bundle; debug prints the matched files
       - name: Upload deploy bundle to droplet
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -38,9 +65,12 @@ jobs:
           username: ${{ secrets.DO_SSH_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
           source: |
-            docker-compose.prod.yml
-            caddy/Caddyfile
+            ./docker-compose.prod.yml
+            ./caddy/Caddyfile
           target: /opt/checkin
+          overwrite: true
+          strip_components: 0
+          debug: true
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
@@ -66,6 +96,4 @@ jobs:
 
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
-
             docker compose -f docker-compose.prod.yml exec -T web npx prisma migrate deploy
-

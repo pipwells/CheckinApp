@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  STAFF
+}
+
+enum KioskStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum MemberStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model User {
+  id            String     @id @default(cuid())
+  email         String     @unique
+  passwordHash  String
+  name          String?
+  role          Role       @default(STAFF)
+  lastLoginAt   DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  // back-reference for AuditLog.actorUser
+  auditLogs     AuditLog[] @relation("AuditActor")
+}
+
+model Location {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  kiosks    Kiosk[]
+  members   Member[]
+}
+
+model Kiosk {
+  id           String      @id @default(cuid())
+  name         String
+  status       KioskStatus @default(ACTIVE)
+  kioskKeyHash String
+  location     Location    @relation(fields: [locationId], references: [id])
+  locationId   String
+  visits       Visit[]
+  createdAt    DateTime    @default(now())
+}
+
+model Member {
+  id         String       @id @default(cuid())
+  firstName  String
+  lastName   String
+  email      String?
+  phone      String?
+  status     MemberStatus @default(ACTIVE)
+  location   Location     @relation(fields: [locationId], references: [id])
+  locationId String
+  visits     Visit[]
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+}
+
+model Visit {
+  id         String   @id @default(cuid())
+  member     Member   @relation(fields: [memberId], references: [id])
+  memberId   String
+  kiosk      Kiosk    @relation(fields: [kioskId], references: [id])
+  kioskId    String
+  checkInAt  DateTime @default(now())
+  checkOutAt DateTime?
+  metadata   Json?
+}
+
+model AuditLog {
+  id          String  @id @default(cuid())
+  actorUser   User?   @relation("AuditActor", fields: [actorUserId], references: [id])
+  actorUserId String?
+  action      String
+  targetType  String
+  targetId    String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+}

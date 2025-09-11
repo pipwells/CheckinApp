@@ -1,0 +1,27 @@
+{
+  email {$CADDY_EMAIL}
+}
+
+{$DOMAIN} {
+  log {
+    output stdout
+    format console
+  }
+
+  encode zstd gzip
+  header Strict-Transport-Security "max-age=31536000"
+  header X-Content-Type-Options "nosniff"
+  header X-Frame-Options "DENY"
+  header Referrer-Policy "no-referrer-when-downgrade"
+
+  @static {
+    path /_next/*
+  }
+  handle @static {
+    reverse_proxy web:3000
+  }
+
+  handle {
+    reverse_proxy web:3000
+  }
+}

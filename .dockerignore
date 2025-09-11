@@ -1,0 +1,12 @@
+node_modules
+.next
+.env*
+Dockerfile*
+.git
+.gitignore
+npm-debug.log
+pnpm-lock.yaml
+yarn.lock
+
+# prisma artifacts (generated in image)
+prisma/*.db
